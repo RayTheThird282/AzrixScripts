@@ -62,7 +62,7 @@ local Settings = {
 
 -- Create Window with Amethyst (violet) theme
 local Window = Fluent:CreateWindow({
-    Title = "Private | Flood Escape 2",
+    Title = "Azrix | Flood Escape 2",
     SubTitle = "AutoFarm",
     TabWidth = 160,
     Size = UDim2.fromOffset(580, 460),
@@ -554,4 +554,5 @@ task.spawn(function()
             task.wait(0.5)
         end
     end
+
 end)
