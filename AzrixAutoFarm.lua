@@ -8,11 +8,24 @@ local Multiplayer = Workspace:WaitForChild("Multiplayer")
 
 -- // SETTINGS
 _G.AutoFarm = true -- AutoFarm ON by default
+_G.DetectChaoticBombs = true
+_G.ChaoticBombSpeed = 0.01  -- Fast speed when bombs detected
+_G.BombDetectionRange = 30  -- Studs range to detect bombs
+_G.InfiniteAir = true -- Infinite Air ON by default
+_G.ShakeTeleport = true -- Shake teleport ON by default
+_G.ShakeIntensity = 0.5 -- Shake intensity in studs
+_G.ShakeFrequency = 0.02 -- Time between shake movements (seconds)
+_G.NoClipEnabled = false -- NoClip OFF by default
+_G.TeleportMethod = "New (Shake)" -- Default teleport method
 
 -- // VARIABLES
 local CurrentMap = nil
 local PressedButtons = {}
 local LastSafeButtonCFrame = nil
+local hasTeleportedToExit = false
+local CurrentButton = nil
+local ButtonStuckPosition = nil
+local ButtonStuckTime = 0
 
 -- // DEFAULT DELAYS & ATTEMPTS
 local RescueDelay = 2
@@ -36,7 +49,7 @@ else
     Fluent = {
         CreateWindow = function(params)
             return {
-                AddTab = function() return { AddSection = function() end, AddToggle = function() end, AddSlider = function() end, AddButton = function() end, AddParagraph = function() end } end,
+                AddTab = function() return { AddSection = function() end, AddToggle = function() end, AddSlider = function() end, AddButton = function() end, AddParagraph = function() end, AddDropdown = function() end } end,
                 SelectTab = function() end,
                 Notify = function(params) warn(params.Title .. ": " .. params.Content) end,
                 ScreenGui = Instance.new("ScreenGui")
@@ -57,7 +70,15 @@ local Settings = {
     RandomButtonTeleport = RandomizeButtonTeleport,
     ExitTeleportAttempts = ExitTeleportAttempts,
     ExitTeleportDelay = ExitTeleportDelay,
-    StuckDetector = StuckDetectorEnabled
+    StuckDetector = StuckDetectorEnabled,
+    DetectChaoticBombs = _G.DetectChaoticBombs,
+    ChaoticBombSpeed = _G.ChaoticBombSpeed,
+    InfiniteAir = _G.InfiniteAir,
+    ShakeTeleport = _G.ShakeTeleport,
+    ShakeIntensity = _G.ShakeIntensity,
+    ShakeFrequency = _G.ShakeFrequency,
+    NoClipEnabled = _G.NoClipEnabled,
+    TeleportMethod = _G.TeleportMethod
 }
 
 -- Create Window with Amethyst (violet) theme
@@ -77,8 +98,8 @@ local Tabs = {
     Beta = Window:AddTab({ Title = "Beta", Icon = "info" })
 }
 
--- AutoFarm Settings Section (Main Tab)
-Tabs.Main:AddSection("AutoFarm Settings")
+-- General Settings Section (Main Tab)
+Tabs.Main:AddSection("General Settings")
 
 Tabs.Main:AddToggle("AutoFarmToggle", {
     Title = "Enable AutoFarm",
@@ -102,6 +123,191 @@ Tabs.Main:AddToggle("AutoFarmToggle", {
     end
 })
 
+Tabs.Main:AddToggle("InfiniteAirToggle", {
+    Title = "Enable Infinite Air",
+    Description = "Toggles infinite air (health) functionality",
+    Default = Settings.InfiniteAir,
+    Callback = function(state)
+        local success, err = pcall(function()
+            _G.InfiniteAir = state
+            Settings.InfiniteAir = state
+            if Fluent.SaveManager then
+                Fluent.SaveManager:Save("InfiniteAir", state)
+            end
+        end)
+        if not success then
+            Fluent:Notify({
+                Title = "Error",
+                Content = "Failed to update Infinite Air setting: " .. tostring(err),
+                Duration = 5
+            })
+        end
+    end
+})
+
+Tabs.Main:AddToggle("NoClipToggle", {
+    Title = "Enable NoClip",
+    Description = "Toggles ability to pass through objects",
+    Default = Settings.NoClipEnabled,
+    Callback = function(state)
+        local success, err = pcall(function()
+            _G.NoClipEnabled = state
+            Settings.NoClipEnabled = state
+            if Fluent.SaveManager then
+                Fluent.SaveManager:Save("NoClipEnabled", state)
+            end
+            -- Update NoClip state immediately
+            local Character = LocalPlayer.Character
+            if Character then
+                for _, part in pairs(Character:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = not state
+                    end
+                end
+            end
+        end)
+        if not success then
+            Fluent:Notify({
+                Title = "Error",
+                Content = "Failed to update NoClip setting: " .. tostring(err),
+                Duration = 5
+            })
+        end
+    end
+})
+
+-- Settings Section (Main Tab)
+Tabs.Main:AddSection("Settings")
+
+Tabs.Main:AddDropdown("TeleportMethodDropdown", {
+    Title = "Teleport Method",
+    Description = "Choose teleport method for buttons and exit",
+    Values = {"New (Shake)", "Old (Smoother)"},
+    Default = Settings.TeleportMethod,
+    Callback = function(value)
+        local success, err = pcall(function()
+            _G.TeleportMethod = value
+            Settings.TeleportMethod = value
+            if Fluent.SaveManager then
+                Fluent.SaveManager:Save("TeleportMethod", value)
+            end
+            -- Notify user of method change
+            Fluent:Notify({
+                Title = "Teleport Method Updated",
+                Content = "Teleport method set to " .. value .. ". Shake settings are " .. (value == "New (Shake)" and "enabled" or "disabled"),
+                Duration = 3
+            })
+        end)
+        if not success then
+            Fluent:Notify({
+                Title = "Error",
+                Content = "Failed to update Teleport Method: " .. tostring(err) .. ". Please try again.",
+                Duration = 5
+            })
+        end
+    end
+})
+
+-- Conditionally add shake settings based on initial teleport method
+if _G.TeleportMethod == "New (Shake)" then
+    Tabs.Main:AddToggle("ShakeTeleportToggle", {
+        Title = "Enable Shake Teleport",
+        Description = "Toggles shaky teleport for reliable button pressing (New method only)",
+        Default = Settings.ShakeTeleport,
+        Callback = function(state)
+            local success, err = pcall(function()
+                if _G.TeleportMethod == "New (Shake)" then
+                    _G.ShakeTeleport = state
+                    Settings.ShakeTeleport = state
+                    if Fluent.SaveManager then
+                        Fluent.SaveManager:Save("ShakeTeleport", state)
+                    end
+                else
+                    Fluent:Notify({
+                        Title = "Warning",
+                        Content = "Shake Teleport setting is only applicable for New (Shake) method",
+                        Duration = 3
+                    })
+                end
+            end)
+            if not success then
+                Fluent:Notify({
+                    Title = "Error",
+                    Content = "Failed to update Shake Teleport setting: " .. tostring(err),
+                    Duration = 5
+                })
+            end
+        end
+    })
+
+    Tabs.Main:AddSlider("ShakeIntensitySlider", {
+        Title = "Shake Intensity",
+        Description = "Intensity of teleport shake in studs (New method only)",
+        Default = Settings.ShakeIntensity,
+        Min = 0.1,
+        Max = 2,
+        Rounding = 1,
+        Callback = function(value)
+            local success, err = pcall(function()
+                if _G.TeleportMethod == "New (Shake)" then
+                    _G.ShakeIntensity = value
+                    Settings.ShakeIntensity = value
+                    if Fluent.SaveManager then
+                        Fluent.SaveManager:Save("ShakeIntensity", value)
+                    end
+                else
+                    Fluent:Notify({
+                        Title = "Warning",
+                        Content = "Shake Intensity setting is only applicable for New (Shake) method",
+                        Duration = 3
+                    })
+                end
+            end)
+            if not success then
+                Fluent:Notify({
+                    Title = "Error",
+                    Content = "Failed to update Shake Intensity: " .. tostring(err),
+                    Duration = 5
+                })
+            end
+        end
+    })
+
+    Tabs.Main:AddSlider("ShakeFrequencySlider", {
+        Title = "Shake Frequency",
+        Description = "Time between shake movements in seconds (New method only)",
+        Default = Settings.ShakeFrequency,
+        Min = 0.01,
+        Max = 0.1,
+        Rounding = 2,
+        Callback = function(value)
+            local success, err = pcall(function()
+                if _G.TeleportMethod == "New (Shake)" then
+                    _G.ShakeFrequency = value
+                    Settings.ShakeFrequency = value
+                    if Fluent.SaveManager then
+                        Fluent.SaveManager:Save("ShakeFrequency", value)
+                    end
+                else
+                    Fluent:Notify({
+                        Title = "Warning",
+                        Content = "Shake Frequency setting is only applicable for New (Shake) method",
+                        Duration = 3
+                    })
+                end
+            end)
+            if not success then
+                Fluent:Notify({
+                    Title = "Error",
+                    Content = "Failed to update Shake Frequency: " .. tostring(err),
+                    Duration = 5
+                })
+            end
+        end
+    })
+end
+
+-- Other AutoFarm Settings
 Tabs.Main:AddSlider("RescueDelaySlider", {
     Title = "Rescue Delay",
     Description = "Time to wait after rescuing (seconds)",
@@ -199,6 +405,56 @@ Tabs.Main:AddToggle("RandomButtonTeleportToggle", {
     end
 })
 
+-- Chaotic Bomb Settings Section (Main Tab)
+Tabs.Main:AddSection("Chaotic Bomb Settings")
+
+Tabs.Main:AddToggle("DetectChaoticBombsToggle", {
+    Title = "Detect Chaotic Bombs",
+    Description = "Speed up when chaotic bombs are detected",
+    Default = _G.DetectChaoticBombs,
+    Callback = function(state)
+        local success, err = pcall(function()
+            _G.DetectChaoticBombs = state
+            Settings.DetectChaoticBombs = state
+            if Fluent.SaveManager then
+                Fluent.SaveManager:Save("DetectChaoticBombs", state)
+            end
+        end)
+        if not success then
+            Fluent:Notify({
+                Title = "Error",
+                Content = "Failed to update Detect Chaotic Bombs: " .. tostring(err),
+                Duration = 5
+            })
+        end
+    end
+})
+
+Tabs.Main:AddSlider("ChaoticBombSpeedSlider", {
+    Title = "Bomb Reaction Speed",
+    Description = "Teleport speed when chaotic bombs are nearby",
+    Default = _G.ChaoticBombSpeed,
+    Min = 0.001,
+    Max = 0.05,
+    Rounding = 3,
+    Callback = function(value)
+        local success, err = pcall(function()
+            _G.ChaoticBombSpeed = value
+            Settings.ChaoticBombSpeed = value
+            if Fluent.SaveManager then
+                Fluent.SaveManager:Save("ChaoticBombSpeed", value)
+            end
+        end)
+        if not success then
+            Fluent:Notify({
+                Title = "Error",
+                Content = "Failed to update Bomb Reaction Speed: " .. tostring(err),
+                Duration = 5
+            })
+        end
+    end
+})
+
 -- Map & Exit Enhancements Section (Main Tab)
 Tabs.Main:AddSection("Map & Exit Enhancements")
 
@@ -253,8 +509,8 @@ Tabs.Main:AddSlider("ExitTeleportDelaySlider", {
 })
 
 Tabs.Main:AddToggle("StuckDetectorToggle", {
-    Title = "Enable Stuck Detector",
-    Description = "Detect and resolve stuck situations after 1 minute",
+    Title = "Enable Stuck Detectors",
+    Description = "Detect and resolve stuck situations (15s for buttons, 30s for exit)",
     Default = Settings.StuckDetector,
     Callback = function(state)
         local success, err = pcall(function()
@@ -347,6 +603,14 @@ if Fluent.SaveManager then
         Settings.ExitTeleportAttempts = Fluent.SaveManager:Get("ExitTeleportAttempts") or Settings.ExitTeleportAttempts
         Settings.ExitTeleportDelay = Fluent.SaveManager:Get("ExitTeleportDelay") or Settings.ExitTeleportDelay
         Settings.StuckDetector = Fluent.SaveManager:Get("StuckDetector") or Settings.StuckDetector
+        Settings.DetectChaoticBombs = Fluent.SaveManager:Get("DetectChaoticBombs") or Settings.DetectChaoticBombs
+        Settings.ChaoticBombSpeed = Fluent.SaveManager:Get("ChaoticBombSpeed") or Settings.ChaoticBombSpeed
+        Settings.InfiniteAir = Fluent.SaveManager:Get("InfiniteAir") or Settings.InfiniteAir
+        Settings.ShakeTeleport = Fluent.SaveManager:Get("ShakeTeleport") or Settings.ShakeTeleport
+        Settings.ShakeIntensity = Fluent.SaveManager:Get("ShakeIntensity") or Settings.ShakeIntensity
+        Settings.ShakeFrequency = Fluent.SaveManager:Get("ShakeFrequency") or Settings.ShakeFrequency
+        Settings.NoClipEnabled = Fluent.SaveManager:Get("NoClipEnabled") or Settings.NoClipEnabled
+        Settings.TeleportMethod = Fluent.SaveManager:Get("TeleportMethod") or Settings.TeleportMethod
         _G.AutoFarm = Settings.AutoFarm
         RescueDelay = Settings.RescueDelay
         TeleportDelay = Settings.TeleportDelay
@@ -355,6 +619,14 @@ if Fluent.SaveManager then
         ExitTeleportAttempts = Settings.ExitTeleportAttempts
         ExitTeleportDelay = Settings.ExitTeleportDelay
         StuckDetectorEnabled = Settings.StuckDetector
+        _G.DetectChaoticBombs = Settings.DetectChaoticBombs
+        _G.ChaoticBombSpeed = Settings.ChaoticBombSpeed
+        _G.InfiniteAir = Settings.InfiniteAir
+        _G.ShakeTeleport = Settings.ShakeTeleport
+        _G.ShakeIntensity = Settings.ShakeIntensity
+        _G.ShakeFrequency = Settings.ShakeFrequency
+        _G.NoClipEnabled = Settings.NoClipEnabled
+        _G.TeleportMethod = Settings.TeleportMethod
     end)
     if not success then
         Fluent:Notify({
@@ -422,6 +694,22 @@ local function GetNewButtons(Map)
     return newButtons
 end
 
+local function HasNearbyChaoticBombs(character)
+    if not _G.DetectChaoticBombs or not character or not character.PrimaryPart then 
+        return false 
+    end
+    
+    for _, bomb in pairs(Workspace:GetChildren()) do
+        if bomb.Name == "ChaoticBomb" and bomb:FindFirstChild("Explosion") then
+            if (bomb.Position - character.PrimaryPart.Position).Magnitude < _G.BombDetectionRange then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
 local function JumpPress(Button)
     if not Button or not Button.Parent or PressedButtons[Button] then return end
     local Character = LocalPlayer.Character
@@ -432,18 +720,50 @@ local function JumpPress(Button)
     local Hitbox = Button:FindFirstChild("Hitbox")
     if not Hitbox then return end
 
+    CurrentButton = Button
     LastSafeButtonCFrame = HRP.CFrame
     local attempts = 0
+    ButtonStuckPosition = HRP.Position
+    ButtonStuckTime = 0
+    
     while _G.AutoFarm and Button.Parent and not PressedButtons[Button] and attempts < MaxButtonAttempts do
-        HRP.CFrame = Hitbox.CFrame + Vector3.new(0,2,0)
-        Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        -- Check for bombs and adjust speed
+        local currentDelay = HasNearbyChaoticBombs(Character) and _G.ChaoticBombSpeed or TeleportDelay
+        
+        -- Position HumanoidRootPart so head is half inside, half outside the button
+        local optimalCFrame = Hitbox.CFrame * CFrame.new(0, Hitbox.Size.Y / 2 - 2, 0) -- Head center at hitbox surface, HRP 2 studs below
+        
+        -- Trigger press
         firetouchinterest(HRP, Hitbox, 0)
-        task.wait(RandomizeButtonTeleport and math.random(3,10)/100 or TeleportDelay)
+        
+        -- Apply teleport method
+        if _G.TeleportMethod == "New (Shake)" and _G.ShakeTeleport then
+            local shakeTime = 0
+            while shakeTime < 0.1 do -- Short duration for instant activation
+                local shakeOffset = Vector3.new(
+                    math.random(-_G.ShakeIntensity, _G.ShakeIntensity),
+                    math.random(-_G.ShakeIntensity, _G.ShakeIntensity),
+                    math.random(-_G.ShakeIntensity, _G.ShakeIntensity)
+                )
+                HRP.CFrame = optimalCFrame + shakeOffset
+                task.wait(_G.ShakeFrequency)
+                shakeTime = shakeTime + _G.ShakeFrequency
+            end
+        else
+            HRP.CFrame = optimalCFrame
+            task.wait(0.1) -- Original smoother method duration
+        end
+        
         firetouchinterest(HRP, Hitbox, 1)
+        
         attempts = attempts + 1
-        task.wait(RandomizeButtonTeleport and math.random(3,10)/100 or TeleportDelay)
+        task.wait(currentDelay)
     end
+    
     PressedButtons[Button] = true
+    CurrentButton = nil
+    ButtonStuckPosition = nil
+    ButtonStuckTime = 0
 end
 
 local function TeleportToExit(ExitRegion)
@@ -453,50 +773,110 @@ local function TeleportToExit(ExitRegion)
     if not HRP then return end
 
     for i = 1, ExitTeleportAttempts do
-        if (HRP.Position - ExitRegion.Position).Magnitude < 3 then break end
-        HRP.CFrame = CFrame.new(ExitRegion.Position + Vector3.new(0,3,0))
+        if _G.TeleportMethod == "New (Shake)" and _G.ShakeTeleport then
+            local shakeTime = 0
+            while shakeTime < 0.1 do -- Short duration for shake
+                local shakeOffset = Vector3.new(
+                    math.random(-_G.ShakeIntensity, _G.ShakeIntensity),
+                    math.random(-_G.ShakeIntensity, _G.ShakeIntensity),
+                    math.random(-_G.ShakeIntensity, _G.ShakeIntensity)
+                )
+                HRP.CFrame = CFrame.new(ExitRegion.Position + Vector3.new(0, 3, 0)) + shakeOffset
+                task.wait(_G.ShakeFrequency)
+                shakeTime = shakeTime + _G.ShakeFrequency
+            end
+        else
+            HRP.CFrame = CFrame.new(ExitRegion.Position + Vector3.new(0, 3, 0))
+        end
         task.wait(ExitTeleportDelay)
     end
+    hasTeleportedToExit = true
 end
 
 -- =========================
--- INFINITE HEALTH & STUCK DETECTOR
+-- INFINITE HEALTH, NOCLIP & STUCK DETECTORS
 -- =========================
-local StuckPosition = nil
-local StuckTime = 0
+local ExitStuckPosition = nil
+local ExitStuckTime = 0
 
 RunService.RenderStepped:Connect(function(deltaTime)
     local Character = LocalPlayer.Character
     if Character and Character:FindFirstChild("HumanoidRootPart") then
         local HRP = Character:WaitForChild("HumanoidRootPart")
+        local Humanoid = Character:FindFirstChildOfClass("Humanoid")
 
-        -- Infinite health
-        if Character:FindFirstChild("Humanoid") then
-            Character.Humanoid.Health = 99999
+        -- Infinite health (air)
+        if _G.InfiniteAir and Humanoid then
+            Humanoid.Health = 99999
         end
 
-        -- Stuck detector (triggers after 1 minute)
-        if StuckDetectorEnabled then
+        -- NoClip
+        if _G.NoClipEnabled then
+            for _, part in pairs(Character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end
+
+        -- Button stuck detector (15 seconds, when pressing a button)
+        if StuckDetectorEnabled and CurrentButton and ButtonStuckPosition then
+            if (HRP.Position - ButtonStuckPosition).Magnitude < 1 and not PressedButtons[CurrentButton] then
+                ButtonStuckTime = ButtonStuckTime + deltaTime
+                if ButtonStuckTime >= 15 then -- 15 seconds
+                    local Hitbox = CurrentButton:FindFirstChild("Hitbox")
+                    if Hitbox then
+                        local optimalCFrame = Hitbox.CFrame * CFrame.new(0, Hitbox.Size.Y / 2 - 2, 0) -- Same head-based positioning
+                        HRP.CFrame = optimalCFrame
+                        Fluent:Notify({
+                            Title = "Button Stuck Detector",
+                            Content = "Teleported back to button due to being stuck for 15 seconds",
+                            Duration = 3
+                        })
+                    end
+                    ButtonStuckTime = 0
+                    ButtonStuckPosition = HRP.Position
+                end
+            else
+                ButtonStuckTime = 0
+                ButtonStuckPosition = HRP.Position
+            end
+        end
+
+        -- Exit stuck detector (30 seconds, only after TP to exit)
+        if StuckDetectorEnabled and hasTeleportedToExit then
             local ExitRegion = CurrentMap and CurrentMap:FindFirstChild("ExitRegion", true)
             local InExit = ExitRegion and (HRP.Position - ExitRegion.Position).Magnitude < 5
 
-            if StuckPosition then
-                if (HRP.Position - StuckPosition).Magnitude < 1 and not InExit then
-                    StuckTime = StuckTime + deltaTime
-                    if StuckTime >= 60 and LastSafeButtonCFrame then -- 1 minute (60 seconds)
+            if ExitStuckPosition then
+                if (HRP.Position - ExitStuckPosition).Magnitude < 1 and not InExit then
+                    ExitStuckTime = ExitStuckTime + deltaTime
+                    if ExitStuckTime >= 30 and LastSafeButtonCFrame then -- 30 seconds
                         HRP.CFrame = LastSafeButtonCFrame
-                        StuckTime = 0
+                        ExitStuckTime = 0
                         Fluent:Notify({
-                            Title = "Stuck Detector",
-                            Content = "Teleported back to last safe button due to being stuck for 1 minute",
+                            Title = "Exit Stuck Detector",
+                            Content = "Teleported back to last safe button due to being stuck for 30 seconds after exit TP",
                             Duration = 3
                         })
                     end
                 else
-                    StuckTime = 0
+                    ExitStuckTime = 0
                 end
             end
-            StuckPosition = HRP.Position
+            ExitStuckPosition = HRP.Position
+        end
+    end
+end)
+
+-- Update NoClip on character respawn
+LocalPlayer.CharacterAdded:Connect(function(Character)
+    if _G.NoClipEnabled then
+        task.wait() -- Wait for character to fully load
+        for _, part in pairs(Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
         end
     end
 end)
@@ -521,23 +901,17 @@ task.spawn(function()
         })
 
         PressedButtons = {}
+        hasTeleportedToExit = false
+        ExitStuckTime = 0
+        ExitStuckPosition = nil
+        CurrentButton = nil
+        ButtonStuckTime = 0
+        ButtonStuckPosition = nil
         local hasRescue = AutoRescue(CurrentMap)
 
-        -- Auto skip broken maps
-        local Buttons = GetNewButtons(CurrentMap)
-        local ExitRegion = CurrentMap:FindFirstChild("ExitRegion", true)
-        if not hasRescue and #Buttons == 0 and not ExitRegion then
-            Fluent:Notify({
-                Title = "Map Issue",
-                Content = "Map broken, skipping...",
-                Duration = 3
-            })
-            continue
-        end
-
         while CurrentMap and CurrentMap.Parent == Multiplayer and _G.AutoFarm do
-            Buttons = GetNewButtons(CurrentMap)
-            ExitRegion = CurrentMap:FindFirstChild("ExitRegion", true)
+            local Buttons = GetNewButtons(CurrentMap)
+            local ExitRegion = CurrentMap:FindFirstChild("ExitRegion", true)
 
             if #Buttons == 0 then
                 if ExitRegion then
@@ -554,5 +928,4 @@ task.spawn(function()
             task.wait(0.5)
         end
     end
-
 end)
