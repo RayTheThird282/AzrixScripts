@@ -12,8 +12,8 @@ local Multiplayer = Workspace:WaitForChild("Multiplayer")
 
 -- // SETTINGS
 _G.AutoFarm = true
-_G.AutoFarmMethod = "Newest auto farm Method" -- Default to TeleportV3
-_G.TeleportV3Speed = 60 -- Default from provided code
+_G.AutoFarmMethod = "Second Auto Farm Method"
+_G.TeleportV3Speed = 60
 _G.ShakeIntensity = 2
 _G.ShakeFrequency = 0.01
 _G.InfiniteAir = true
@@ -39,10 +39,10 @@ local CurrencyConnections = {}
 local currentTween = nil
 
 -- // DEFAULT DELAYS & ATTEMPTS
-local RescueDelay = 2
-local TeleportDelay = 0.07
-local ExitTeleportDelay = 0.03
-local MaxButtonAttempts = 5
+local RescueDelay = 0.5
+local TeleportDelay = 0.03
+local ExitTeleportDelay = 0.09
+local MaxButtonAttempts = 2
 local ExitTeleportAttempts = 25
 local RandomizeButtonTeleport = false
 local StuckDetectorEnabled = true
@@ -503,7 +503,7 @@ Tabs.AutoFarmConfig:AddSlider("MaxButtonAttemptsSlider", {
 Tabs.AutoFarmConfig:AddToggle("RandomButtonTeleportToggle", {
     Title = "Randomize Button Teleport",
     Description = "Randomize teleport delay for buttons",
-    Default = Settings.RandomButtonTeleport,
+    Default = Settings.RandomizeButtonTeleport,
     Callback = function(state)
         local success, err = pcall(function()
             RandomizeButtonTeleport = state
@@ -804,7 +804,7 @@ local function cancel()
 end
 
 -- // AUTO FARM METHODS
-local function AutoFarmMain(Button) -- Oldest method (direct CFrame setting)
+local function AutoFarmMain(Button) -- Direct CFrame setting
     local Character = LocalPlayer.Character
     if not Character then return end
     local HRP = Character:FindFirstChild("HumanoidRootPart")
@@ -938,11 +938,7 @@ local function AutoRescue(Map)
         local HRP = Character:WaitForChild("HumanoidRootPart")
         local target = Rescue.PrimaryPart and Rescue.PrimaryPart.CFrame or (Rescue:FindFirstChild("Visual") and Rescue.Visual.CFrame)
         if target then
-            local ts = TweenService:Create(HRP, TweenInfo.new(1, Enum.EasingStyle.Linear), {CFrame = target + Vector3.new(0,3,0)})
-            cancel()
-            currentTween = ts
-            ts:Play()
-            ts.Completed:Wait()
+            HRP.CFrame = target + Vector3.new(0, 3, 0)
             task.wait(RescueDelay)
         end
     end)
@@ -987,7 +983,6 @@ local function TeleportToExit(ExitRegion)
         task.wait(ExitTeleportDelay)
     end
     hasTeleportedToExit = true
-    print("Teleported to exit!")
 end
 
 -- // INFINITE HEALTH, NOCLIP, STUCK DETECTORS
@@ -1096,6 +1091,7 @@ end)
 -- // MAIN LOOP
 task.spawn(function()
     Fluent:Notify({ Title = "AutoFarm Started", Content = "Azrix AutoFarm enabled. Waiting for new map...", Duration = 5 })
+    StarterGui:SetCore("SendNotification", { Title = "Welcome!", Text = "Enjoy farming! Current Status: " .. tostring(_G.AutoFarm) })
     while task.wait(1) do
         if not _G.AutoFarm then continue end
         Multiplayer:WaitForChild("NewMap", math.huge)
